@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "qvLYx0O1Ghc=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\darakadk\\Desktop\\Interview_Assignment\\Assignment\\src\\RateLimiter.Api\\RateLimiter.Api.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\darakadk\\.nuget\\packages\\microsoft.aspnetcore.openapi\\10.0.1\\microsoft.aspnetcore.openapi.10.0.1.nupkg.sha512",
+    "C:\\Users\\darakadk\\.nuget\\packages\\microsoft.openapi\\2.0.0\\microsoft.openapi.2.0.0.nupkg.sha512"
+  ],
+  "logs": []
+}
