@@ -153,7 +153,53 @@ The current implementation uses a `ConcurrentDictionary` and `lock` mechanism fo
 - `IRateLimiter` is registered as a Singleton because it maintains the in-memory state.
 - `IClock` is abstracted to allow deterministic unit testing of time-based logic.
 
+## Distributed Systems Strategy
+
+The current implementation uses an **In-Memory** store (`ConcurrentDictionary`) which is fast and efficient for a single instance. However, in a distributed environment where multiple instances run behind a load balancer, this approach has a flaw: each instance would maintain its own independent counters. A user could hit Instance A (consuming 50 tokens) and Instance B (consuming 50 tokens), effectively doubling their limit.
+
+### Proposed Architecture for Distributed Rate Limiting
+
+To support a distributed environment, the state must be externalized.
+
+1.  **Shared State Store**: Use a high-performance distributed cache like **Redis** or **Memcached**.
+2.  **Algorithm Adaptation**:
+    *   The **Token Bucket** algorithm logic remains the same.
+    *   Instead of updating a local object, we perform atomic operations on the shared cache.
+    *   **Atomicity**: Use **Redis Lua Scripts** to ensure that `Check` + `Decrement` happens atomically. This prevents race conditions where two requests simultaneously see "1 token remaining" and both consume it.
+
+### Step-by-Step Migration
+1.  Implement a new class `RedisTokenBucketRateLimiter : IRateLimiter`.
+2.  Inject `IConnectionMultiplexer` (availble via `StackExchange.Redis`).
+3.  Replace the `lock` block with a call to Redis `EVAL` with a Lua script that:
+    *   Retrieves current tokens and timestamp.
+    *   Calculates refill based on time delta.
+    *   Updates the key if allowed, or returns retry time if blocked.
+
+## Docker Support
+
+A `Dockerfile` is included in the root directory.
+
+### Build and Run
+
+1.  **Build the Image**:
+    ```bash
+    docker build -t ratelimiter-api .
+    ```
+2.  **Run the Container**:
+    ```bash
+    docker run -p 8080:8080 ratelimiter-api
+    ```
+3.  Access the API at `http://localhost:8080/RateLimiter/check`.
+
+## Observability
+
+The application now includes **Structured Logging** using the standard .NET `ILogger`.
+
+*   **Allowed Requests**: Logged as `Information`. Includes the `userId` and `RemainingTokens`.
+*   **Rejected Requests**: Logged as `Warning`. Includes `userId`, `AvailableTokens`, and `ResetTime` (wait duration).
+
+For production, these logs should be shipped to an aggregator like **ELK Stack**, **Datadog**, or **Azure Monitor** to visualize the `Allowed` vs `Rejected` request rates.
+
 ## Future Improvements
-- **Distributed Storage**: Implement a Redis-backed `IRateLimiter` for horizontal scaling.
 - **Multiple Rules**: Support different limits for different user tiers or API keys.
 - **Middleware**: Implement as ASP.NET Core Middleware for transparent request filtering.

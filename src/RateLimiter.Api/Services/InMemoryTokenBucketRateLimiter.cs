@@ -14,14 +14,19 @@ public class InMemoryTokenBucketRateLimiter : IRateLimiter
 {
     private readonly IOptionsMonitor<RateLimitOptions> _options;
     private readonly IClock _clock;
+    private readonly ILogger<InMemoryTokenBucketRateLimiter> _logger; // Added ILogger
     
     // In-memory store. For a distributed solution, this would be replaced by a cache client (Redis).
     private readonly ConcurrentDictionary<string, Bucket> _buckets = new();
 
-    public InMemoryTokenBucketRateLimiter(IOptionsMonitor<RateLimitOptions> options, IClock clock)
+    public InMemoryTokenBucketRateLimiter(
+        IOptionsMonitor<RateLimitOptions> options, 
+        IClock clock,
+        ILogger<InMemoryTokenBucketRateLimiter> logger) // Added ILogger to constructor
     {
         _options = options;
         _clock = clock;
+        _logger = logger; // Assigned ILogger
     }
 
     public Task<RateLimitResult> CheckAsync(string key)
@@ -33,6 +38,7 @@ public class InMemoryTokenBucketRateLimiter : IRateLimiter
         {
             // Fail safe or allow? Let's assume misconfig blocks or allows. 
             // Blocking is safer for protection.
+            _logger.LogWarning("Invalid rate limit configuration. Blocking request."); // Added logging
             return Task.FromResult(new RateLimitResult(false, 0, null));
         }
     
@@ -58,6 +64,7 @@ public class InMemoryTokenBucketRateLimiter : IRateLimiter
             if (bucket.Tokens >= 1.0)
             {
                 bucket.Tokens -= 1.0;
+                _logger.LogInformation("Request for key {Key} Allowed. Remaining Tokens: {Tokens:F2}", key, bucket.Tokens); // Added logging
                 return Task.FromResult(new RateLimitResult(true, (int)bucket.Tokens, null));
             }
             else
@@ -70,6 +77,7 @@ public class InMemoryTokenBucketRateLimiter : IRateLimiter
                 var timeToWaitSeconds = missingTokens / refillRate;
                 var resetTime = now.AddSeconds(timeToWaitSeconds);
 
+                _logger.LogWarning("Request for key {Key} Rejected. Available Tokens: {Tokens:F2}. Reset in: {WaitTime:F2}s", key, bucket.Tokens, timeToWaitSeconds); // Added logging
                 return Task.FromResult(new RateLimitResult(false, (int)bucket.Tokens, resetTime));
             }
         }
