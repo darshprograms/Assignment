@@ -1,4 +1,5 @@
 
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
 using RateLimiter.Api.Models;
@@ -11,6 +12,7 @@ public class TokenBucketRateLimiterTests
 {
     private readonly Mock<IOptionsMonitor<RateLimitOptions>> _mockOptions;
     private readonly Mock<IClock> _mockClock;
+    private readonly Mock<ILogger<InMemoryTokenBucketRateLimiter>> _mockLogger;
     private readonly InMemoryTokenBucketRateLimiter _rateLimiter;
     private readonly RateLimitOptions _options;
 
@@ -23,7 +25,12 @@ public class TokenBucketRateLimiterTests
         _mockClock = new Mock<IClock>();
         _mockClock.Setup(c => c.UtcNow).Returns(new DateTime(2025, 1, 1, 12, 0, 0, DateTimeKind.Utc));
 
-        _rateLimiter = new InMemoryTokenBucketRateLimiter(_mockOptions.Object, _mockClock.Object);
+        _mockLogger = new Mock<ILogger<InMemoryTokenBucketRateLimiter>>();
+
+        _rateLimiter = new InMemoryTokenBucketRateLimiter(
+            _mockOptions.Object, 
+            _mockClock.Object, 
+            _mockLogger.Object);
     }
 
     [Fact]
