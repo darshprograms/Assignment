@@ -18,7 +18,10 @@ public class TokenBucketRateLimiterTests
 
     public TokenBucketRateLimiterTests()
     {
-        _options = new RateLimitOptions { PermitLimit = 10, WindowSeconds = 60 };
+        _options = new RateLimitOptions 
+        { 
+            DefaultRule = new RateLimitRule { PermitLimit = 10, WindowSeconds = 60 }
+        };
         _mockOptions = new Mock<IOptionsMonitor<RateLimitOptions>>();
         _mockOptions.Setup(o => o.CurrentValue).Returns(_options);
         
@@ -48,7 +51,7 @@ public class TokenBucketRateLimiterTests
     public async Task CheckAsync_BlocksRequest_WhenLimitExceeded()
     {
         // Arrange
-        _options.PermitLimit = 1;
+        _options.DefaultRule.PermitLimit = 1;
 
         // Act - Consume 1
         var result1 = await _rateLimiter.CheckAsync("user2");
@@ -68,8 +71,8 @@ public class TokenBucketRateLimiterTests
     {
         // Arrange
         // Limit 10 per 1 second
-        _options.PermitLimit = 10;
-        _options.WindowSeconds = 1; // refill rate = 10 per second
+        _options.DefaultRule.PermitLimit = 10;
+        _options.DefaultRule.WindowSeconds = 1; // refill rate = 10 per second
         
         // Current Time: 12:00:00
         
@@ -91,5 +94,28 @@ public class TokenBucketRateLimiterTests
         Assert.True(refillResult.IsAllowed);
         // We had 0. Refilled 5. Consumed 1. Remaining 4.
         Assert.Equal(4, refillResult.RemainingPermits);
+    }
+
+    [Fact]
+    public async Task CheckAsync_UsesSpecificRule_WhenDefined()
+    {
+        // Arrange
+        _options.Rules.Add("vip-user", new RateLimitRule { PermitLimit = 50, WindowSeconds = 60 });
+        _options.DefaultRule.PermitLimit = 10;
+
+        // Act - VIP User
+        var resultVip = await _rateLimiter.CheckAsync("vip-user");
+        
+        // Act - Regular User
+        var resultRegular = await _rateLimiter.CheckAsync("regular-user");
+
+        // Assert
+        // VIP should start with 50 -> 49
+        Assert.True(resultVip.IsAllowed);
+        Assert.Equal(49, resultVip.RemainingPermits);
+
+        // Regular should start with 10 -> 9
+        Assert.True(resultRegular.IsAllowed);
+        Assert.Equal(9, resultRegular.RemainingPermits);
     }
 }

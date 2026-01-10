@@ -31,22 +31,26 @@ public class InMemoryTokenBucketRateLimiter : IRateLimiter
 
     public Task<RateLimitResult> CheckAsync(string key)
     {
-        var rules = _options.CurrentValue;
+        var options = _options.CurrentValue;
+        
+        // Determine the rule to use: Specific -> Default
+        RateLimitRule rule;
+        if (!options.Rules.TryGetValue(key, out rule!))
+        {
+            rule = options.DefaultRule;
+        }
         
         // Ensure rules are sane to avoid division by zero
-        if (rules.PermitLimit <= 0 || rules.WindowSeconds <= 0)
+        if (rule.PermitLimit <= 0 || rule.WindowSeconds <= 0)
         {
-            // Fail safe or allow? Let's assume misconfig blocks or allows. 
-            // Blocking is safer for protection.
-            _logger.LogWarning("Invalid rate limit configuration. Blocking request."); // Added logging
+            _logger.LogWarning("Invalid rate limit configuration for key {Key}. Blocking request.", key);
             return Task.FromResult(new RateLimitResult(false, 0, null));
         }
-    
-        // Get the user's bucket or create a new one with full capacity
-        var bucket = _buckets.GetOrAdd(key, _ => new Bucket(rules.PermitLimit, _clock.UtcNow));
 
-        // Lock to ensure atomicity of the "refill and consume" operation.
-        // In a distributed system (Redis), this would be a Lua script.
+        // Get the user's bucket or create a new one with full capacity
+        // Note: We use rule.PermitLimit as initial capacity only for new buckets.
+        var bucket = _buckets.GetOrAdd(key, _ => new Bucket(rule.PermitLimit, _clock.UtcNow));
+
         lock (bucket)
         {
             var now = _clock.UtcNow;
@@ -54,30 +58,28 @@ public class InMemoryTokenBucketRateLimiter : IRateLimiter
 
             if (timeElapsed < 0) timeElapsed = 0; // Clock skew protection
 
-            var refillRate = rules.PermitLimit / (double)rules.WindowSeconds;
+            var refillRate = rule.PermitLimit / (double)rule.WindowSeconds;
             var tokensToAdd = timeElapsed * refillRate;
 
-            // Refill tokens, up to the max burst capacity (PermitLimit)
-            bucket.Tokens = Math.Min(rules.PermitLimit, bucket.Tokens + tokensToAdd);
+            // Refill tokens, up to the max burst capacity (Current Rule's Limit)
+            // This allows dynamic rule changes to take effect immediately on next refill
+            bucket.Tokens = Math.Min(rule.PermitLimit, bucket.Tokens + tokensToAdd);
             bucket.LastRefill = now;
 
             if (bucket.Tokens >= 1.0)
             {
                 bucket.Tokens -= 1.0;
-                _logger.LogInformation("Request for key {Key} Allowed. Remaining Tokens: {Tokens:F2}", key, bucket.Tokens); // Added logging
+                _logger.LogInformation("Request for key {Key} Allowed. Remaining Tokens: {Tokens:F2}", key, bucket.Tokens);
                 return Task.FromResult(new RateLimitResult(true, (int)bucket.Tokens, null));
             }
             else
             {
-                // Calculate when enough tokens will be available for 1 request
-                // We need 1.0 token. We have bucket.Tokens.
-                // Missing = 1.0 - bucket.Tokens
-                // Time = Missing / Rate
+                // Calculate wait time
                 var missingTokens = 1.0 - bucket.Tokens;
                 var timeToWaitSeconds = missingTokens / refillRate;
                 var resetTime = now.AddSeconds(timeToWaitSeconds);
 
-                _logger.LogWarning("Request for key {Key} Rejected. Available Tokens: {Tokens:F2}. Reset in: {WaitTime:F2}s", key, bucket.Tokens, timeToWaitSeconds); // Added logging
+                _logger.LogWarning("Request for key {Key} Rejected. Available Tokens: {Tokens:F2}. Reset in: {WaitTime:F2}s", key, bucket.Tokens, timeToWaitSeconds);
                 return Task.FromResult(new RateLimitResult(false, (int)bucket.Tokens, resetTime));
             }
         }
